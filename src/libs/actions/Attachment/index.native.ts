@@ -1,5 +1,9 @@
 import {getImageCacheFileExtension} from '@libs/AttachmentUtils';
+import {checkFileExistsWithReason} from '@libs/fileDownload/checkFileExists';
+import {getMimeTypeFromUri} from '@libs/fileDownload/FileUtils';
+import fileURIToPath from '@libs/fileURIToPath';
 import Log from '@libs/Log';
+import ReceiptStorage from '@libs/ReceiptStorage';
 
 import CONST from '@src/CONST';
 import ONYXKEYS from '@src/ONYXKEYS';
@@ -14,19 +18,53 @@ import type {CacheAttachmentProps, GetCachedAttachmentProps, RemoveCachedAttachm
 // and which is never exposed to the user via the iOS Files app (unlike Documents)
 const ATTACHMENT_DIR = `${RNFS.CachesDirectoryPath}/attachments`;
 
-async function cacheAttachment({attachmentID, uri, mimeType}: CacheAttachmentProps) {
-    const isLocalFile = uri.startsWith('file://');
-    const fileExtension = getImageCacheFileExtension(mimeType ?? '');
+function encodeReceiptURI(uri: string) {
+    if (!uri.startsWith('file://')) {
+        return uri;
+    }
 
-    // For local file uploads and the file type is supported for caching, then copy instead of re-downloading the file
-    if (isLocalFile && fileExtension) {
+    return `file://${uri
+        .slice('file://'.length)
+        .split('/')
+        .map((pathSegment) => encodeURIComponent(pathSegment))
+        .join('/')}`;
+}
+
+async function getReadableReceiptURI(uri: string) {
+    const currentURI = ReceiptStorage.resolve(uri) ?? uri;
+    if (currentURI === uri) {
+        return uri;
+    }
+
+    // A readable stored URI may carry deliberate percent encoding that resolve() has decoded.
+    // Keep it verbatim and only encode the resolver output when the stored file is no longer there.
+    const {exists} = await checkFileExistsWithReason(uri);
+    return exists ? uri : encodeReceiptURI(currentURI);
+}
+
+async function cacheAttachmentFromCurrentURI({attachmentID, currentURI, mimeType}: {attachmentID: string; currentURI: string; mimeType?: string}) {
+    const isLocalFile = currentURI.startsWith('file://');
+
+    // For local file uploads, copy supported images instead of routing a file:// URI through
+    // the remote HEAD/download path. Re-cache callers do not have a MIME type, so derive it
+    // from the image filename in that case.
+    if (isLocalFile) {
+        const contentType = mimeType ?? getMimeTypeFromUri(currentURI) ?? '';
+        const fileExtension = getImageCacheFileExtension(contentType);
+        if (!fileExtension) {
+            Log.warn('[AttachmentCache] Unsupported file type, skipping cache', {attachmentID, contentType});
+            return;
+        }
+
         const fileName = `${attachmentID}.${fileExtension}`;
         const destPath = `${ATTACHMENT_DIR}/${fileName}`;
 
         try {
             // The OS can purge Caches wholesale, so the directory may need recreating
             await RNFS.mkdir(ATTACHMENT_DIR);
-            await RNFS.copyFile(uri, destPath);
+            // React Native renderers/readers consume encoded file URIs, while RNFS opens native
+            // filesystem paths. Decode exactly this URI layer at the copy boundary.
+            await RNFS.copyFile(fileURIToPath(currentURI), destPath);
             await Onyx.set(`${ONYXKEYS.COLLECTION.ATTACHMENT}${attachmentID}`, {
                 attachmentID,
                 source: destPath,
@@ -40,7 +78,7 @@ async function cacheAttachment({attachmentID, uri, mimeType}: CacheAttachmentPro
 
     try {
         // HEAD first to validate size and type before downloading
-        const headResponse = await fetch(uri, {method: 'HEAD'});
+        const headResponse = await fetch(currentURI, {method: 'HEAD'});
         const contentType = headResponse.headers.get('content-type') ?? '';
         const contentSize = Number(headResponse.headers.get('content-length') ?? 0);
 
@@ -62,24 +100,30 @@ async function cacheAttachment({attachmentID, uri, mimeType}: CacheAttachmentPro
         const filePath = `${ATTACHMENT_DIR}/${fileName}`;
         // The OS can purge Caches wholesale, so the directory may need recreating
         await RNFS.mkdir(ATTACHMENT_DIR);
-        await RNFetchBlob.config({path: filePath}).fetch('GET', uri);
+        await RNFetchBlob.config({path: filePath}).fetch('GET', currentURI);
 
         await Onyx.set(`${ONYXKEYS.COLLECTION.ATTACHMENT}${attachmentID}`, {
             attachmentID,
             source: filePath,
-            remoteSource: uri,
+            remoteSource: currentURI,
         });
     } catch (error) {
         Log.warn('[AttachmentCache] Failed to cache attachment', {error});
     }
 }
 
+async function cacheAttachment({attachmentID, uri, mimeType}: CacheAttachmentProps) {
+    const currentURI = await getReadableReceiptURI(uri);
+    return cacheAttachmentFromCurrentURI({attachmentID, currentURI, mimeType});
+}
+
 async function getCachedAttachment({attachmentID, attachment, currentSource}: GetCachedAttachmentProps) {
+    const currentURI = await getReadableReceiptURI(currentSource);
     const isStale = attachment ? attachment?.remoteSource && attachment.remoteSource !== currentSource : false;
     if (isStale) {
         // Only re-cache the [markdown-attachment] if it is outdated (updated)
-        cacheAttachment({attachmentID, uri: currentSource});
-        return currentSource;
+        void cacheAttachmentFromCurrentURI({attachmentID, currentURI});
+        return currentURI;
     }
 
     const localSource = attachment?.source;
@@ -94,10 +138,10 @@ async function getCachedAttachment({attachmentID, attachment, currentSource}: Ge
             // reaches the image renderer.
             return localSource.startsWith('file://') ? localSource : `file://${localSource}`;
         }
-        cacheAttachment({attachmentID, uri: currentSource});
+        void cacheAttachmentFromCurrentURI({attachmentID, currentURI});
     }
 
-    return currentSource;
+    return currentURI;
 }
 
 async function removeCachedAttachment({attachmentID, localSource}: RemoveCachedAttachmentProps): Promise<void> {

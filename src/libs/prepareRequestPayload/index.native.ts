@@ -53,7 +53,7 @@ const prepareRequestPayload: PrepareRequestPayload = (command, data, initiatedOf
             }
 
             if (key === 'file' && initiatedOffline) {
-                const {uri: path = '', source, name, type} = value as File;
+                const {uri: path = '', source, name, type, receiptTraceId} = value as File & {receiptTraceId?: string};
                 if (!source) {
                     validateFormDataParameter(command, key, value);
                     formData.append(key, value as string | Blob);
@@ -62,13 +62,40 @@ const prepareRequestPayload: PrepareRequestPayload = (command, data, initiatedOf
                 }
                 // Use the actual file name if available, otherwise fall back to extracting from path/uri
                 const fileName = name || (path ? (path.split('/').pop() ?? '') : '') || '';
-                return readFileAsync(source, fileName, () => {}, undefined, type).then((file) => {
-                    if (!file) {
-                        return;
-                    }
+                const resolvedURI = ReceiptStorage.resolve(source) ?? source;
+                const currentURI = resolvedURI.startsWith('file://')
+                    ? `file://${resolvedURI
+                          .slice('file://'.length)
+                          .split('/')
+                          .map((pathSegment) => encodeURIComponent(pathSegment))
+                          .join('/')}`
+                    : resolvedURI;
 
-                    validateFormDataParameter(command, key, file);
-                    formData.append(key, file);
+                return (resolvedURI === source ? Promise.resolve(source) : checkFileExistsWithReason(source).then(({exists}) => (exists ? source : currentURI))).then((sourceToRead) => {
+                    let readError: {message: string; code?: string} | undefined;
+                    return readFileAsync(
+                        sourceToRead,
+                        fileName,
+                        () => {},
+                        (error) => {
+                            if (error instanceof Error) {
+                                const {code} = error as Error & {code?: unknown};
+                                readError = {message: error.message, code: typeof code === 'string' ? code : undefined};
+                                return;
+                            }
+                            readError = {message: String(error)};
+                        },
+                        type,
+                    ).then((file) => {
+                        if (!file) {
+                            const transactionID = typeof data.transactionID === 'string' ? data.transactionID : undefined;
+                            logReceiptDropped({receiptTraceId, transactionID, command, source, fileName, statError: readError});
+                            return;
+                        }
+
+                        validateFormDataParameter(command, key, file);
+                        formData.append(key, file);
+                    });
                 });
             }
 
