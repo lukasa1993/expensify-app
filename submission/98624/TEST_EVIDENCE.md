@@ -1,88 +1,53 @@
-# Test evidence
+# Final test evidence
 
-## Regression proof
+## Exact filesystem regression proof
 
-The regression suite exercises the actual native attachment, payload, receipt-storage, file-existence, and `readFileAsync` implementations via `jest.requireActual`. It replaces only native filesystem, blob, and fetch I/O.
+`tests/unit/libs/prepareRequestPayloadNativeTest.ts` uses an exact native-path-to-byte map. Its RNFS boundary strips `file://` but does not percent-decode, matching RNFS behavior. A copy fails for an absent exact source, copies actual source bytes, and makes the destination observable through later `exists` and `stat` calls.
 
-Its RNFS mock mirrors the installed dependency boundary: it strips `file://` but never decodes percent escapes. It has an exact native-path-to-bytes map. A copy fails when that exact source is absent, copies actual source bytes to the destination, and makes the destination visible to later `exists` and `stat` calls.
+The test covers ordinary names, spaces, `#`, literal `%23`, encoded forms, unchanged containers, and moved containers. It asserts copied bytes and Onyx cache metadata, not only mock arguments. Distinct-byte `%23` decoys detect both zero and repeated decoding.
 
-### Red: unfinished implementation
-
-Before the copy-boundary and local re-cache correction, the completed regression suite was run in the active checkout:
-
-```sh
-npm test -- tests/unit/libs/prepareRequestPayloadNativeTest.ts --runInBand
-```
-
-Result: **11 failed, 14 passed, 25 total**. The failures were behavioral, not test setup failures:
-
-- Encoded space, `#`, and literal `%23` filenames could not be copied from their exact on-disk paths for unchanged or moved containers.
-- A `percent%2523.jpg` URI did not produce a cache file from on-disk `percent%23.jpg` bytes.
-- Purged local-image re-cache reached the remote HEAD path instead of rebuilding from the local source.
-- An unsupported local file reached the remote HEAD path.
-
-That exact-path regression body passed after the correction. The final suite then strengthened its `%23` case with different-byte zero- and double-decoding decoys; it also passes. The red run deliberately used the same exact-path filesystem model, so a prefix-only source match or a mock-added decode cannot produce a false green result.
-
-### Green: clean locked-dependency worktrees
-
-Both isolated worktrees described in `BASE_COMMIT.md` used fresh `npm ci` installs with Node `v26.5.0`, npm `11.17.0`, and Bun `1.3.14`.
-
-Base command:
-
-```sh
-cd /tmp/expensify-98624-base
-TASK_NODE_BIN=/home/l/.nvm/versions/node/v26.5.0/bin \
-PATH="$TASK_NODE_BIN:$PATH" \
-npm test -- tests/unit/libs/prepareRequestPayloadNativeTest.ts tests/unit/fileURIToPathTest.ts tests/unit/prepareRequestPayloadTest.ts --runInBand
-```
-
-Result: **3 suites passed, 21 tests passed**.
-
-Final-patch command:
-
-```sh
-cd /tmp/expensify-98624-final
-TASK_NODE_BIN=/home/l/.nvm/versions/node/v26.5.0/bin \
-PATH="$TASK_NODE_BIN:$PATH" \
-npm test -- tests/unit/libs/prepareRequestPayloadNativeTest.ts tests/unit/fileURIToPathTest.ts tests/unit/prepareRequestPayloadTest.ts --runInBand
-```
-
-Result: **3 suites passed, 39 tests passed**. The same command was rerun after refreshing the isolated final worktree with the complete current patch, with the same result. The additional 18 tests are the new native attachment/payload regression cases; the base suite does not contain them.
-
-The final native suite specifically proves all of the following:
-
-- Normal names, spaces, `#`, literal `%23`, and their encoded URI forms copy the expected bytes under unchanged and moved containers.
-- `percent%2523.jpg` copies on-disk `percent%23.jpg`, not `percent%2523.jpg` or `percent#.jpg`; the latter two are seeded as different-byte decoys so an accidental zero or second decode cannot appear green.
-- Onyx metadata is written only after the copied cache file exists and has the source bytes.
-- A valid cache hit remains a cache hit.
-- A purged local-image cache rebuild writes the source bytes and metadata; a subsequent lookup returns the rebuilt `file://` cache source.
-- MIME-less re-cache infers a supported local image type; unsupported local files do not issue HEAD or GET; validated remote caching and unsupported remote validation remain covered.
-- The real `readFileAsync` path reads the mocked I/O bytes and passes recovered bytes, filename, MIME type, `source`, and `uri` into FormData. The test does not return a pre-created `File` based on an expected input string.
-- Missing and unreadable offline sources omit the attachment while retaining other fields and emit exactly one `logReceiptDropped` event.
-
-## Static and broader checks
-
-| Check | Command/result |
+| Check | Result |
 | --- | --- |
-| Formatting | `./node_modules/.bin/oxfmt --check src/libs/actions/Attachment/index.native.ts src/libs/prepareRequestPayload/index.native.ts tests/unit/libs/prepareRequestPayloadNativeTest.ts submission/98624/*.md` — **PASS**. Oxfmt matched and checked the three supported TypeScript files. |
-| Spelling | `npm run spell-changed` — **PASS**, 7 files checked and 0 issues. The wrapper fetched `origin/main`; the direct cspell invocation over the same 7 files also passed. |
-| Typecheck | Full `npm run typecheck` was run in both clean worktrees with Node 26. Both exited 1 with **218 TypeScript errors** and byte-identical complete logs (SHA-256 `f9d4bd81…e6ddf5c4b`) at `/tmp/expensify-98624-base-typecheck.log` and `/tmp/expensify-98624-final-latest-typecheck.log`. This establishes no typecheck delta from the complete final patch; it does not characterize individual baseline errors as unrelated merely by path. |
-| Lint | `npm run lint-changed` fetched `origin/main` then failed before lint results with `TypeError: Cannot read properties of undefined (reading 'Cjs')` in `@typescript-eslint/typescript-estree`. Direct changed-file lint in both clean worktrees fails at the same point: ESLint 9.36 / `@typescript-eslint/typescript-estree` accesses `ts.Extension.Cjs`, which is absent in locked TypeScript 7.0.2. After normalizing the worktree path, the complete logs are identical (SHA-256 `61a84d17…eb2afa016`) at `/tmp/expensify-98624-base-eslint.log` and `/tmp/expensify-98624-final-latest-eslint.log`. No manifest, lockfile, or toolchain workaround was changed. |
-| Native attachment action suite | `tests/actions/AttachmentTest.ts --runInBand --no-cache` was attempted in both clean worktrees under Node 26. Neither test run started: Jest failed while the existing `__mocks__/@react-navigation/native/index.ts` re-export loaded `@react-navigation/core/lib/module/index.js`, whose package declares ESM. The same `Must use import to load ES Module` failure occurs in base and final. Repository transform configuration includes React Navigation, but Jest 29 still requires the transformed module as CommonJS. No test configuration was changed. |
+| Deliberate unfinished copy boundary: `RNFS.copyFile(currentURI, destPath)` | Expected RED: 10 failed, 15 passed, 25 total. Space/hash copies were absent and `percent%2523.jpg` copied deliberately seeded wrong zero-decode bytes. |
+| Restored final boundary: `RNFS.copyFile(fileURIToPath(currentURI), destPath)` | PASS: 25/25. |
+| Final focused native, selector, web payload, and attachment suites | PASS: 4 suites, 76 tests. |
 
-## Device verification
+The purged-cache test proves source bytes reach cache storage, Onyx metadata is written, and the next lookup returns the rebuilt cache. It also proves local `file://` sources do not obtain false success from remote HEAD/GET mocks. Supported local images rebuild when MIME type is omitted; unsupported local files remain uncached. Valid remote validation/download behavior and cache hits remain covered.
 
-**NOT RUN.** `adb` is installed, but an escalated `adb devices -l` check returned no attached devices. No Android emulator executable, Android SDK environment, `xcrun`, or `xcodebuild` is available. Therefore no Android or iOS container-migration test can run in this workspace. No application restart is offered as evidence of container migration.
+Offline payload coverage invokes the real `readFileAsync` implementation while mocking only its I/O boundary. It proves recovered bytes, filename, MIME type, `source`, and `uri` reach FormData. Missing and unreadable files retain omission behavior and each produce exactly one `logReceiptDropped` event.
 
-When an authorized device environment is available, the required procedure is:
+## Isolated comparison and static checks
 
-1. Use an existing controlled test account and queue a native chat attachment while offline on a build that stores an absolute `Receipts-Upload` URI.
-2. Perform an in-place app upgrade with the same bundle identifier and preserved app data; do not uninstall or merely restart.
-3. Confirm the queued record retains the old-container URI while the receipt exists only under the current container's `Receipts-Upload` folder.
-4. Reconnect, send the queued request, and verify the attachment uploads, the cache rebuild uses the current path, and a deliberately unreadable or missing file produces exactly one dropped event.
+| Check | Base | Final |
+| --- | --- | --- |
+| `NODE_OPTIONS=--max_old_space_size=16384 npm run typecheck` | PASS | PASS |
+| `npm test -- --runInBand tests/unit/prepareRequestPayloadTest.ts tests/actions/AttachmentTest.ts` | PASS: 2 suites, 13 tests | PASS: 2 suites, 13 tests |
 
-## Patch application and publication status
+Final-only checks:
 
-The complete seven-file delivery patch at `/home/l/bugs/fix-98624-attachment-paths.patch` was generated from the final diff. In a fresh detached worktree at the recorded base, `git apply --check` passed, `git apply` succeeded, `git diff --check` passed, all four submission records appeared, and `git apply --reverse --check` passed. The patch is regenerated once more after recording this result, then the same clean-application check is repeated.
+- Focused test command: `npm test -- --runInBand tests/unit/libs/getReadableAttachmentSourceTest.ts tests/unit/libs/prepareRequestPayloadNativeTest.ts tests/unit/prepareRequestPayloadTest.ts tests/actions/AttachmentTest.ts` — PASS, 4 suites / 76 tests.
+- `node_modules/.bin/oxfmt --check` on all five changed source/test files — PASS.
+- Direct `npx eslint --format stylish --no-warn-ignored --concurrency=1` on all five changed source/test files — PASS.
+- `npm run spell-changed -- <changed source/test files>` — PASS, zero issues.
+- React Navigation ESM probe: `npm test -- --runInBand tests/unit/Navigation/guards/handleNavigationGuardRedirect.test.ts` — PASS, 5/5. The existing React Navigation package patch resolves Jest's VM-module/CommonJS manifest conflict.
+- `git diff --check`, `git apply --check`, actual `git apply`, and `git apply --reverse --check` from the recorded base — PASS.
 
-The overlap remains **SUBSTANTIAL DUPLICATE**. No proposal, PR, issue comment, push, assignment, acceptance, contract application, or payment action was published or claimed.
+Full-repository lint was not represented as green. Base/final full attempts were bounded by VM memory pressure; a one-worker run exhausted the Node heap, and a higher-memory run did not complete. The repository lint wrapper also reproducibly exits 2 with `Failed to parse ESLint JSON output` even for these five files while direct ESLint passes. No test, assertion, manifest, or linter configuration was weakened to obtain a pass.
+
+The no-argument spelling wrapper's branch-discovery fetch could not resolve its host in the VM. The explicit changed-file spelling check above completed successfully.
+
+## Android / ARM64 verification
+
+- Device: Samsung `SM-A225F`; reported ABIs `arm64-v8a,armeabi-v7a,armeabi`; installed app primary ABI `arm64-v8a`.
+- Final build: `./gradlew app:assembleDevelopmentDebug -x lint -PreactNativeArchitectures=arm64-v8a` with the existing Android SDK, Node, Bun, and host-tool environment. PASS: `BUILD SUCCESSFUL`; 1512 tasks; CMake arm64 targets configured and built.
+- APK: `/home/l/bugs/App/android/app/build/outputs/apk/development/debug/app-development-debug.apk`; confirmed to contain `arm64-v8a` native libraries.
+- Installation: `adb install -r -d <APK>` — PASS. The package reports version `9.4.78-0` and primary ABI `arm64-v8a`.
+- Launch smoke: `com.expensify.chat.dev/com.expensify.chat.MainActivity` was resumed/focused and its ARM64 process remained alive through a 15-second check. The sampled process log had no fatal exception or script-load failure.
+
+NOT RUN: a real persisted-container migration containing a queued attachment. The supplied device did not have a controlled signed-in, pre-upgrade queued-attachment state. No restart was used as a substitute.
+
+An optional Metro DevTools launch was blocked by the VM's missing Linux ATK shared library. That host-only limitation prevents a current live-bundle smoke, not the completed unit, type, Gradle, installation, or native process checks.
+
+## Publication status
+
+The overlap remains documented as **SUBSTANTIAL DUPLICATE** in `ISSUE_RESEARCH.md`. No proposal, PR, issue comment, push, approval, contract application, or payment action was made or claimed.

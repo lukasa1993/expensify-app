@@ -2,9 +2,11 @@
 
 Recorded 2026-09-15. This is new source-level validation, not a restatement of the earlier repository-test results.
 
+> Historical record: the final completed verification is in `TEST_EVIDENCE.md`. This document retains the earlier isolated correction experiment and should not be read as the current branch/test/device status.
+
 ## Saved code
 
-- Repository: `lukasa1993/expensify-app`
+- Repository: owner fork checkout
 - Code branch: `fix/98624-exact-file-source`
 - Code commit: `56e106cff295f4d3a8fec3357dbb6ed2d894c8db`
 - Reviewed parent: `281f0e976905fd406b4bea653eff0db6621bef0e`

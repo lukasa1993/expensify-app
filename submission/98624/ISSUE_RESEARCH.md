@@ -2,6 +2,10 @@
 
 Reviewed the current issue discussion and contribution rules on 2026-09-15 before completing the local engineering work.
 
+## Final local status
+
+At the repository owner's direction, the implementation and local verification were completed after this overlap was documented. That technical completion does not change the duplicate conclusion below and is not a new proposal, approval, assignment, or payment claim. The final source selection keeps the exact native path paired with its once-encoded read URI; see `TEST_EVIDENCE.md` for the completed test and device record.
+
 ## Eligibility conclusion: SUBSTANTIAL DUPLICATE
 
 This local patch is not eligible to be submitted as a new proposal. `CONTRIBUTING.md` requires every new proposal to be importantly, meaningfully, or considerably different from existing proposals. `HOW_TO_WORK_WITH_MELVINBOT.md` applies the same rule to Melvin issues: a contributor may submit only a meaningfully different approach.
@@ -27,6 +31,6 @@ There is no reviewer acceptance or hire for comment 5615141371 at review time. T
 
 ## Local technical scope
 
-The implementation was completed and retained locally at the user's direction despite this documented overlap. It addresses old receipt-container paths, encoded local filenames at the RNFS copy boundary, purged attachment caches, and silent offline attachment drops. It does not address image flicker or upload ordering.
+The implementation was completed and retained locally at the user's direction despite this documented overlap. It addresses old receipt-container paths, encoded local filenames at the RNFS copy boundary, purged attachment caches, and silent offline attachment drops. It does not address image flicker or upload ordering. No proposal was created from this implementation.
 
 No issue comment, proposal, PR, push, contract application, or payment action was made.

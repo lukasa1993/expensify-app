@@ -12,8 +12,8 @@ The cache can therefore copy from a missing old or encoded path, return a stale 
 
 ### What changes do you think we should make in order to solve the problem?
 
-- Select a readable receipt URI before copying or rebuilding a native attachment cache. Keep a valid saved URI verbatim; only encode the resolver fallback. Use the selected URI for the fallback return and cache rebuild. Leave a cache entry's `attachment.source` alone because it belongs under `Caches`, not receipt storage.
-- At the RNFS copy boundary, convert exactly one encoded `file://` URI layer with `fileURIToPath(currentURI)`. This lets `percent%2523.jpg` select the on-disk `percent%23.jpg`; it does not decode it again to `percent#.jpg`.
+- Select an exact native receipt path before copying or rebuilding a native attachment cache. Keep that path paired with a URI encoded once for reading/rendering. Check valid stored decoded/raw candidates before re-rooting both candidates through receipt storage. Leave a cache entry's `attachment.source` alone because it belongs under `Caches`, not receipt storage.
+- At the RNFS copy boundary, convert exactly one generated encoded `file://` URI layer with `fileURIToPath(currentURI)`. This lets `percent%2523.jpg` select the on-disk `percent%23.jpg`; it does not decode it again to `percent#.jpg`.
 - Treat supported local images as local during re-cache even when the call omits `mimeType`: derive the image MIME type from the URI with the repository helper and copy into the cache. Skip unsupported local files rather than sending `file://` through remote HEAD/GET validation. Preserve remote HEAD validation and download behavior.
 - In the offline `file` branch, keep a readable saved source. If it is gone, re-root the receipt URI to the current storage folder before reading it. Pass a failure callback to `readFileAsync`; when it returns no file after recovery fails, keep the existing omission behavior and emit one `logReceiptDropped` event with the available trace ID, transaction ID, command, source, filename, and callback error.
 
