@@ -1,4 +1,5 @@
 import type * as AttachmentSourceModule from '@libs/getReadableAttachmentSource';
+import type ReceiptStorage from '@libs/ReceiptStorage/types';
 
 const mockCurrentContainer = '/Containers/Data/Application/CURRENT';
 const mockReceiptsFolder = `${mockCurrentContainer}/Documents/Receipts-Upload`;
@@ -18,7 +19,8 @@ jest.mock('@expensify/react-native-hybrid-app', () => ({__esModule: true, defaul
 jest.mock('@libs/Log', () => ({__esModule: true, default: {warn: jest.fn()}}));
 jest.mock('@libs/saveLastRoute', () => ({__esModule: true, default: jest.fn()}));
 jest.mock('@libs/getReceiptsUploadFolderPath', () => ({__esModule: true, default: () => mockReceiptsFolder}));
-jest.mock('@libs/ReceiptStorage', () => jest.requireActual('@libs/ReceiptStorage/index.native.ts'));
+const mockReceiptStorageModule = jest.requireActual<{default: ReceiptStorage}>('@libs/ReceiptStorage/index.native.ts');
+jest.mock('@libs/ReceiptStorage', () => mockReceiptStorageModule);
 
 // Exercise the real selector, native receipt resolver, and URI-to-path conversion.
 // The filesystem boundary checks exact native paths: it does not decode URI text.

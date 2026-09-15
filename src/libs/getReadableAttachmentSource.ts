@@ -1,7 +1,7 @@
-import fileURIToPath from '@libs/fileURIToPath';
-import ReceiptStorage from '@libs/ReceiptStorage';
-
 import RNFS from 'react-native-fs';
+
+import fileURIToPath from './fileURIToPath';
+import ReceiptStorage from './ReceiptStorage';
 
 type ReadableAttachmentSource = {
     /** URI for fetch/rendering, encoded from the exact selected native path. */
@@ -24,22 +24,23 @@ function fromNativePath(nativePath: string): ReadableAttachmentSource {
 
 /** Try each exact path once, retaining the one that actually names a file. */
 async function findExistingFile(paths: string[], checkedPaths: Set<string>): Promise<string | undefined> {
-    for (const path of paths) {
-        if (checkedPaths.has(path)) {
-            continue;
-        }
-        checkedPaths.add(path);
-        try {
-            const stat = await RNFS.stat(path);
-            if (stat.isFile()) {
-                return path;
-            }
-        } catch {
-            // Try the next legacy representation. If none exists, the caller's actual read/copy
-            // still reports failure through its existing error path rather than throwing here.
-        }
+    const path = paths.find((candidate) => !checkedPaths.has(candidate));
+    if (!path) {
+        return;
     }
-    return undefined;
+
+    checkedPaths.add(path);
+    try {
+        const stat = await RNFS.stat(path);
+        if (stat.isFile()) {
+            return path;
+        }
+    } catch {
+        // Try the next legacy representation. If none exists, the caller's actual read/copy
+        // still reports failure through its existing error path rather than throwing here.
+    }
+
+    return findExistingFile(paths, checkedPaths);
 }
 
 /**

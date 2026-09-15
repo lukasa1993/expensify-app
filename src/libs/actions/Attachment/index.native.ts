@@ -1,5 +1,6 @@
 import {getImageCacheFileExtension} from '@libs/AttachmentUtils';
 import {getMimeTypeFromUri} from '@libs/fileDownload/FileUtils';
+import fileURIToPath from '@libs/fileURIToPath';
 import type {ReadableAttachmentSource} from '@libs/getReadableAttachmentSource';
 import getReadableAttachmentSource from '@libs/getReadableAttachmentSource';
 import Log from '@libs/Log';
@@ -37,9 +38,10 @@ async function cacheAttachmentFromSource({attachmentID, source, mimeType}: {atta
         try {
             // The OS can purge Caches wholesale, so the directory may need recreating
             await RNFS.mkdir(ATTACHMENT_DIR);
-            // The source selector already chose the exact decoded-or-raw filesystem path.
-            // Decoding it again would change a literal %23 filename into a different # file.
-            await RNFS.copyFile(nativePath, destPath);
+            // The selector generated this URI once from the exact native path it selected. Decode
+            // that one URI layer only at the RNFS boundary; decoding the native path again would
+            // turn a literal %23 filename into a different # filename.
+            await RNFS.copyFile(fileURIToPath(currentURI), destPath);
             await Onyx.set(`${ONYXKEYS.COLLECTION.ATTACHMENT}${attachmentID}`, {
                 attachmentID,
                 source: destPath,
@@ -107,7 +109,9 @@ async function getCachedAttachment({attachmentID, attachment, currentSource}: Ge
     const source = await getReadableAttachmentSource(currentSource);
     if (isStale || localSource) {
         // Pass the selected path/URI pair through unchanged, including on a purged-cache rebuild.
-        void cacheAttachmentFromSource({attachmentID, source});
+        cacheAttachmentFromSource({attachmentID, source}).catch((error) => {
+            Log.warn('[AttachmentCache] Failed to rebuild attachment cache', {attachmentID, error});
+        });
     }
 
     return source.readURI;

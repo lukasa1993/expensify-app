@@ -20,6 +20,8 @@ type MockRemoteFile = {
 
 type FileWithMockBytes = File & {
     mockBytes?: Uint8Array;
+    source?: unknown;
+    uri?: unknown;
 };
 
 const mockNativeFile = global.File;
@@ -109,8 +111,17 @@ async function getCachedMetadata(attachmentID: string) {
     return cachedAttachment;
 }
 
-async function fileText(file: File) {
-    return new TextDecoder().decode((file as FileWithMockBytes).mockBytes ?? new Uint8Array());
+async function fileText(file: FileWithMockBytes) {
+    return new TextDecoder().decode(file.mockBytes ?? new Uint8Array());
+}
+
+function getUploadedFile(formData: FormData, key: string): FileWithMockBytes {
+    const value = formData.get(key);
+    if (!(value instanceof File)) {
+        throw new Error(`Expected FormData '${key}' to contain a File`);
+    }
+
+    return value;
 }
 
 jest.mock('react-native-fs', () => ({
@@ -169,11 +180,11 @@ function writePercentEncodingDecoys() {
 
 describe('native attachment caching and payload recovery', () => {
     beforeAll(() => {
-        global.File = MockFileWithBytes as typeof File;
+        Object.defineProperty(global, 'File', {configurable: true, value: MockFileWithBytes, writable: true});
     });
 
     afterAll(() => {
-        global.File = mockNativeFile;
+        Object.defineProperty(global, 'File', {configurable: true, value: mockNativeFile, writable: true});
     });
 
     beforeEach(async () => {
@@ -289,7 +300,7 @@ describe('native attachment caching and payload recovery', () => {
 
         expect(mockReadFileText(destinationPath)).toBe(bytes);
         await expect(mockExists(destinationPath)).resolves.toBe(true);
-        await expect(mockStat(destinationPath)).resolves.toEqual(expect.objectContaining({isFile: expect.any(Function)}));
+        expect((await mockStat(destinationPath)).isFile()).toBe(true);
         expect(await getCachedMetadata(attachmentID)).toEqual({attachmentID, source: destinationPath});
         expect(mockCopyFile).toHaveBeenCalledWith(sourcePath, destinationPath);
     });
@@ -308,7 +319,7 @@ describe('native attachment caching and payload recovery', () => {
 
         expect(mockReadFileText(destinationPath)).toBe(bytes);
         await expect(mockExists(destinationPath)).resolves.toBe(true);
-        await expect(mockStat(destinationPath)).resolves.toEqual(expect.objectContaining({isFile: expect.any(Function)}));
+        expect((await mockStat(destinationPath)).isFile()).toBe(true);
         expect(await getCachedMetadata(attachmentID)).toEqual({attachmentID, source: destinationPath});
         expect(mockCopyFile).toHaveBeenCalledWith(sourcePath, destinationPath);
     });
@@ -470,7 +481,7 @@ describe('native attachment caching and payload recovery', () => {
             true,
         );
 
-        const uploadedFile = formData.get('file') as File & {source?: string; uri?: string};
+        const uploadedFile = getUploadedFile(formData, 'file');
         expect(uploadedFile).toBeInstanceOf(File);
         expect(await fileText(uploadedFile)).toBe(sourceBytes);
         expect(uploadedFile.name).toBe('upload.jpg');
@@ -488,7 +499,7 @@ describe('native attachment caching and payload recovery', () => {
 
         const formData = await prepareRequestPayload('AddAttachment', {file: {source: sourceURI, name: 'upload.jpg', type: 'image/jpeg'}}, true);
 
-        const uploadedFile = formData.get('file') as File & {source?: string};
+        const uploadedFile = getUploadedFile(formData, 'file');
         expect(await fileText(uploadedFile)).toBe('readable literal percent-23 bytes');
         expect(uploadedFile.source).toBe(sourceURI);
         expect(mockFetch).toHaveBeenCalledWith(sourceURI);
@@ -550,7 +561,7 @@ describe('native attachment caching and payload recovery', () => {
         const onlineFormData = await prepareRequestPayload('AddAttachment', {file: upload}, false);
         const ordinaryFormData = await prepareRequestPayload('SomeCommand', {amount: '100', currency: 'USD', undefinedField: undefined}, false);
 
-        expect(await fileText(remoteFormData.get('file') as File)).toBe('remote payload bytes');
+        expect(await fileText(getUploadedFile(remoteFormData, 'file'))).toBe('remote payload bytes');
         expect(offlineFormData.get('file')).toBe(upload);
         expect(onlineFormData.get('file')).toBe(upload);
         expect(ordinaryFormData.get('amount')).toBe('100');
