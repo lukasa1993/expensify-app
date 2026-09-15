@@ -20,6 +20,6 @@ The final verification used detached worktrees at:
 
 All verification commands used Node `v26.5.0`, npm `11.17.0`, and Bun `1.3.14`. Fresh `npm ci` was attempted but did not complete in this VM's dependency-cache/install environment. The isolated worktrees instead used the same installed package-lock-backed dependency snapshot and re-bound local `file:` packages to each checkout. This is a recorded limitation, not a claim of a fresh clean installation.
 
-The complete delivery artifact is `/home/l/bugs/fix-98624-attachment-paths.patch` (SHA-256 `d19434362ca6593f8e2cacebc92353f5b5400c6f26b957c01f0c0d53f5a58afa`). It was generated from the base through the final source tree and cleanly application-checked against the recorded base.
+The complete delivery artifact is `/home/l/bugs/fix-98624-attachment-paths.patch`. It is generated from the base through the final source tree and cleanly application-checked against the recorded base.
 
 No push or external publication was made.
