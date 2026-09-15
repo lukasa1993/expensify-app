@@ -1,9 +1,8 @@
 import {getImageCacheFileExtension} from '@libs/AttachmentUtils';
-import {checkFileExistsWithReason} from '@libs/fileDownload/checkFileExists';
 import {getMimeTypeFromUri} from '@libs/fileDownload/FileUtils';
-import fileURIToPath from '@libs/fileURIToPath';
+import type {ReadableAttachmentSource} from '@libs/getReadableAttachmentSource';
+import getReadableAttachmentSource from '@libs/getReadableAttachmentSource';
 import Log from '@libs/Log';
-import ReceiptStorage from '@libs/ReceiptStorage';
 
 import CONST from '@src/CONST';
 import ONYXKEYS from '@src/ONYXKEYS';
@@ -18,37 +17,13 @@ import type {CacheAttachmentProps, GetCachedAttachmentProps, RemoveCachedAttachm
 // and which is never exposed to the user via the iOS Files app (unlike Documents)
 const ATTACHMENT_DIR = `${RNFS.CachesDirectoryPath}/attachments`;
 
-function encodeReceiptURI(uri: string) {
-    if (!uri.startsWith('file://')) {
-        return uri;
-    }
-
-    return `file://${uri
-        .slice('file://'.length)
-        .split('/')
-        .map((pathSegment) => encodeURIComponent(pathSegment))
-        .join('/')}`;
-}
-
-async function getReadableReceiptURI(uri: string) {
-    const currentURI = ReceiptStorage.resolve(uri) ?? uri;
-    if (currentURI === uri) {
-        return uri;
-    }
-
-    // A readable stored URI may carry deliberate percent encoding that resolve() has decoded.
-    // Keep it verbatim and only encode the resolver output when the stored file is no longer there.
-    const {exists} = await checkFileExistsWithReason(uri);
-    return exists ? uri : encodeReceiptURI(currentURI);
-}
-
-async function cacheAttachmentFromCurrentURI({attachmentID, currentURI, mimeType}: {attachmentID: string; currentURI: string; mimeType?: string}) {
-    const isLocalFile = currentURI.startsWith('file://');
+async function cacheAttachmentFromSource({attachmentID, source, mimeType}: {attachmentID: string; source: ReadableAttachmentSource; mimeType?: string}) {
+    const {readURI: currentURI, nativePath} = source;
 
     // For local file uploads, copy supported images instead of routing a file:// URI through
     // the remote HEAD/download path. Re-cache callers do not have a MIME type, so derive it
     // from the image filename in that case.
-    if (isLocalFile) {
+    if (nativePath !== undefined) {
         const contentType = mimeType ?? getMimeTypeFromUri(currentURI) ?? '';
         const fileExtension = getImageCacheFileExtension(contentType);
         if (!fileExtension) {
@@ -62,9 +37,9 @@ async function cacheAttachmentFromCurrentURI({attachmentID, currentURI, mimeType
         try {
             // The OS can purge Caches wholesale, so the directory may need recreating
             await RNFS.mkdir(ATTACHMENT_DIR);
-            // React Native renderers/readers consume encoded file URIs, while RNFS opens native
-            // filesystem paths. Decode exactly this URI layer at the copy boundary.
-            await RNFS.copyFile(fileURIToPath(currentURI), destPath);
+            // The source selector already chose the exact decoded-or-raw filesystem path.
+            // Decoding it again would change a literal %23 filename into a different # file.
+            await RNFS.copyFile(nativePath, destPath);
             await Onyx.set(`${ONYXKEYS.COLLECTION.ATTACHMENT}${attachmentID}`, {
                 attachmentID,
                 source: destPath,
@@ -113,35 +88,29 @@ async function cacheAttachmentFromCurrentURI({attachmentID, currentURI, mimeType
 }
 
 async function cacheAttachment({attachmentID, uri, mimeType}: CacheAttachmentProps) {
-    const currentURI = await getReadableReceiptURI(uri);
-    return cacheAttachmentFromCurrentURI({attachmentID, currentURI, mimeType});
+    const source = await getReadableAttachmentSource(uri);
+    return cacheAttachmentFromSource({attachmentID, source, mimeType});
 }
 
 async function getCachedAttachment({attachmentID, attachment, currentSource}: GetCachedAttachmentProps) {
-    const currentURI = await getReadableReceiptURI(currentSource);
     const isStale = attachment ? attachment?.remoteSource && attachment.remoteSource !== currentSource : false;
-    if (isStale) {
-        // Only re-cache the [markdown-attachment] if it is outdated (updated)
-        void cacheAttachmentFromCurrentURI({attachmentID, currentURI});
-        return currentURI;
-    }
-
     const localSource = attachment?.source;
-    if (localSource) {
-        // The OS can purge Caches while the Onyx record survives, so verify the file still
-        // exists. If it was purged, fall back to the current source and re-cache it.
+    if (!isStale && localSource) {
+        // A valid cache hit must not depend on the original source or receipt container.
         const localFileExists = await RNFS.exists(localSource);
         if (localFileExists) {
-            // The path is stored without a scheme so RNFS file operations (exists/unlink) accept it, but
-            // React Native's <Image> on Android only loads a local file when it carries a `file://`
-            // scheme (a bare path renders as a broken thumbnail), so add the scheme before the path
-            // reaches the image renderer.
+            // RNFS stores a native path; Android's image renderer needs the file:// scheme.
             return localSource.startsWith('file://') ? localSource : `file://${localSource}`;
         }
-        void cacheAttachmentFromCurrentURI({attachmentID, currentURI});
     }
 
-    return currentURI;
+    const source = await getReadableAttachmentSource(currentSource);
+    if (isStale || localSource) {
+        // Pass the selected path/URI pair through unchanged, including on a purged-cache rebuild.
+        void cacheAttachmentFromSource({attachmentID, source});
+    }
+
+    return source.readURI;
 }
 
 async function removeCachedAttachment({attachmentID, localSource}: RemoveCachedAttachmentProps): Promise<void> {
