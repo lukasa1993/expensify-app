@@ -1,5 +1,6 @@
 import {checkFileExistsWithReason} from '@libs/fileDownload/checkFileExists';
 import {readFileAsync} from '@libs/fileDownload/FileUtils';
+import getReadableAttachmentSource from '@libs/getReadableAttachmentSource';
 import ReceiptStorage from '@libs/ReceiptStorage';
 import {logReceiptDropped} from '@libs/telemetry/ReceiptObservability';
 import validateFormDataParameter from '@libs/validateFormDataParameter';
@@ -62,16 +63,7 @@ const prepareRequestPayload: PrepareRequestPayload = (command, data, initiatedOf
                 }
                 // Use the actual file name if available, otherwise fall back to extracting from path/uri
                 const fileName = name || (path ? (path.split('/').pop() ?? '') : '') || '';
-                const resolvedURI = ReceiptStorage.resolve(source) ?? source;
-                const currentURI = resolvedURI.startsWith('file://')
-                    ? `file://${resolvedURI
-                          .slice('file://'.length)
-                          .split('/')
-                          .map((pathSegment) => encodeURIComponent(pathSegment))
-                          .join('/')}`
-                    : resolvedURI;
-
-                return (resolvedURI === source ? Promise.resolve(source) : checkFileExistsWithReason(source).then(({exists}) => (exists ? source : currentURI))).then((sourceToRead) => {
+                return getReadableAttachmentSource(source).then(({readURI: sourceToRead}) => {
                     let readError: {message: string; code?: string} | undefined;
                     return readFileAsync(
                         sourceToRead,
